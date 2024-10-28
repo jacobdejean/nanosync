@@ -1,0 +1,24 @@
+{
+  "name": "@dejean/nanosync",
+  "version": "0.1.0",
+  "description": "A simple and unopinionated library for syncing field data between any two sources.",
+  "module": "src/nanosync.ts",
+  "type": "module",
+  "scripts": {
+    "build": "bun ./tooling/build.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/graphql": "^14.5.0",
+    "@types/pg": "^8.11.10"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "graphql": "^16.9.0",
+    "pg": "^8.13.1",
+    "tiny-invariant": "^1.3.3"
+  }
+}

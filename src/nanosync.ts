@@ -5,13 +5,11 @@
   /_/ /_/\__,_/_/ /_/\____/____/\__, /_/ /_/\___(_)___/\___/
                                /____/
 
-  Nanosync is a simple and unopinionated library for syncing
-  field data between any two integrations.
+  A simple and unopinionated library for syncing field data.
 
-  It accomplished through a simple, standardized API for
-  building integrations. Essentially, all an integration needs
-  to implement is a way to resolve a query and a mutation
-  given a set of fields.
+  It accomplishes this through a simple, standardized API for
+  building integrations and managing the complexities between
+  them.
 */
 
 import {
@@ -24,58 +22,48 @@ import {
 import invariant from "tiny-invariant";
 
 /**
-    The core of nanosync is a `Process` object which represents
-    an effort to sync data between two integrations. With given
-    field mapping and a source and target integration, this
-    library.
-
-    Process holds it's initial options and a generated sync schema.
-    This sync schema contains all of the necessary information to
-    generate the queries and mutations. It's up to the integration
-    if it actually sends graphql to it's API (ideally if its supported)
-    or if it uses the mapped fields only. Regardless, the graphql schema
-    is the source of truth once the process is created.
+    A SyncProcess is created by the user to represent a connection
+    between two integrations
 */
-export type Process = {
-  readonly options: ProcessOptions;
+export type SyncProcess = {
   readonly schema: GraphQLSchema;
+  readonly source: IntegrationInstance;
+  readonly target: IntegrationInstance;
 };
 
 /**
-    ProcessOptions are used to initialize a new Process object. The options
-    are `immutable` (this is still js) so we expect that a bi-directional sync
-    will require two processes, and that updating a process means replacing it
+    The field mapping and integration definitions get built into
+    a SyncProcess, who's schema is the source of truth thereafter
 */
-export type ProcessOptions = {
+export type SyncProcessOptions = {
   readonly fields: Array<MappedField>;
-  readonly sourceIntegration: Integration;
-  readonly targetIntegration: Integration;
+  readonly sourceIntegration: IntegrationDefinition;
+  readonly targetIntegration: IntegrationDefinition;
 };
 
 /**
-    FieldType covers every basic column type that you would find in a service
-    like airtable, postgres, or google sheets, etc. so it should cover a lot of
-    semantic ground. there should be an escape hatch type for custom types
+    I don't know if the core sync process should worry about field
+    types. Perhaps offload type validation to the integrations. For
+    now it doesn't matter
 */
-export type FieldType =
-  | "string"
-  | "number"
-  | "boolean"
-  | "date"
-  | "time"
-  | "datetime"
-  | "json"
-  | "array"
-  | "object"
-  | "custom";
+export type FieldType = "string";
+// | "number"
+// | "boolean"
+// | "date"
+// | "time"
+// | "datetime"
+// | "json"
+// | "array"
+// | "object"
+// | "custom";
 
 /**
-    FieldValue represents the possible underlying js types for any FieldType
+    Again, we could consider more here but this is where I'm starting
 */
-export type FieldValue = string | number | boolean | null | object;
+export type FieldValue = string; /* | number | boolean | null | object; */
 
 /**
-  Field respresents a field in a source or target integration
+  A field in a source or target integration
   mapped to a standardized nanosync type
 */
 export type Field = {
@@ -84,34 +72,77 @@ export type Field = {
 };
 
 /**
-    MappedField represents two associated fields in a source and target integration.
-    sourceField will overwrite targetField
+    Once two fields have been matched they can be referred to as 'source'
+    and 'target' fields
 */
 export type MappedField = {
-  sourceField: Field;
-  targetField: Field;
+  source: Field;
+  target: Field;
 };
 
-export type QueryResult<T = FieldValue> = Promise<T>;
-export type MutationResult<T = FieldValue> = Promise<T>;
-
 /**
-    Integration stores basic information about a service as well as the
-    necessary functions to resolve a sync process.
+    The integration definition stores basic information about a service
+    as well as the necessary callbacks to resolve a sync process.
 */
-export type Integration = {
+export type IntegrationDefinition = {
   name: string;
   description: string;
 
-  resolveQuery: <T extends FieldValue = FieldValue>(
-    fieldKey: string,
-  ) => QueryResult<T>;
+  /**
+    Called before connection to request any necessary credentials
+  */
+  authenticate: () => Promise<boolean>;
 
-  resolveMutation: <T extends FieldValue = FieldValue>(
-    fieldKey: string,
-    value: T,
-  ) => MutationResult<T>;
+  /**
+    connect should return a client that is used by other callbacks to
+    operate on the resource
+  */
+  connect: () => Promise<IntegrationClient>;
+
+  /**
+    The integration needs to be read from, you tell me how
+  */
+  query: <T extends FieldValue = FieldValue>(
+    keys: Array<string>,
+  ) => Array<Promise<T>>;
+
+  /**
+    The integration needs to be written to, you tell me how
+  */
+  mutate: <T extends FieldValue = FieldValue>(
+    fields: Record<string, T>,
+  ) => Array<Promise<T>>;
+
+  /**
+    The disconnect callback should clean up and close any connections
+    Called before unauthentication
+  */
+  disconnect: () => Promise<boolean>;
+
+  /**
+    If a service requires some king of session instead of just a token,
+    this provides an opportunity to end that session
+  */
+  unauthenticate: () => Promise<boolean>;
 };
+
+/**
+    The client returned by the integration's `connect` procedure
+*/
+export type IntegrationClient = any;
+
+export type IntegrationProperties = Record<string, string>;
+
+export type IntegrationOptions = {
+  properties: IntegrationProperties;
+  secrets: Record<string, string>;
+} & IntegrationDefinition;
+
+export type IntegrationInstance = {
+  client: IntegrationClient;
+  properties: IntegrationProperties;
+  secrets: Record<string, string>;
+} & IntegrationDefinition;
 
 /**
     findQueryFieldName finds the source field key given a target field key
@@ -119,8 +150,7 @@ export type Integration = {
 export const findQueryFieldName = (
   fields: Array<MappedField>,
   mutationFieldName: string,
-) =>
-  fields.find((f) => mutationFieldName === f.targetField.key)?.sourceField.key;
+) => fields.find((f) => mutationFieldName === f.target.key)?.source.key;
 
 /**
     findMutationFieldName finds the target field key given a source field key
@@ -128,7 +158,7 @@ export const findQueryFieldName = (
 export const findMutationFieldName = (
   fields: Array<MappedField>,
   queryFieldName: string,
-) => fields.find((f) => queryFieldName === f.sourceField.key)?.targetField.key;
+) => fields.find((f) => queryFieldName === f.source.key)?.target.key;
 
 /**
     This cast is just used for mocking
@@ -136,16 +166,17 @@ export const findMutationFieldName = (
 export const FieldValue = (value: any) => String(value) as FieldValue;
 
 /**
-    createProcess generates a Process object from ProcessOptions
+    createProcess generates a schema and
 */
-export function createProcess(options: ProcessOptions) {
+export function createProcess(options: SyncProcessOptions) {
   const process = {
-    options,
     schema: createSchema(
       options.fields,
       options.sourceIntegration,
       options.targetIntegration,
     ),
+    source: options.sourceIntegration,
+    target: options.targetIntegration,
   };
   if (!validateProcess(process)) {
     throw new Error("Invalid process");
@@ -154,17 +185,41 @@ export function createProcess(options: ProcessOptions) {
 }
 
 /**
+    createIntegration generates an Integration object from IntegrationOptions.
+    This api will see a lot of evolution over the next few commits
+*/
+export function defineIntegration(options: IntegrationOptions) {
+  return {
+    ...options,
+  };
+}
+
+export function connectIntegration(integration: IntegrationDefinition) {
+  const client = integration.connect();
+}
+
+export function disconnectIntegration(integration) {}
+
+export function authenticateIntegration(integration) {}
+
+export function unauthenticateIntegration(integration) {}
+
+export function queryIntegration(integration) {}
+
+export function mutateIntegration(integration) {}
+
+/**
     createSchema generates the necessary graphql schema to facilitate
     generating source and target queries
 */
 export function createSchema(
   fields: Array<MappedField>,
-  sourceIntegration: Integration,
-  targetIntegration: Integration,
+  sourceIntegration: IntegrationDefinition,
+  targetIntegration: IntegrationDefinition,
 ) {
   return new GraphQLSchema({
-    query: createQuerySchema(fields, sourceIntegration.resolveQuery),
-    mutation: createMutationSchema(fields, targetIntegration.resolveMutation),
+    query: createQuerySchema(fields),
+    mutation: createMutationSchema(fields),
   });
 }
 
@@ -173,14 +228,22 @@ export function createSchema(
 */
 export function createQuerySchema(
   fields: Array<MappedField>,
-  resolver: Integration["resolveQuery"],
+  integrationName: string,
 ) {
   // Generate query fields for each field in the target integration
   const queryFields = fields.map((f) => ({
-    [f.sourceField.key]: {
+    [f.source.key]: {
       type: GraphQLString,
-      resolve() {
-        return resolver(f.sourceField.key);
+      description: createSchemaDescription({
+        key: f.source.key,
+        target: f.target.key,
+        integration: integrationName,
+      }),
+      resolve(source: Record<string, FieldValue>) {
+        if (!(f.source.key in source)) {
+          throw new Error("Source key not found in source response");
+        }
+        return source[f.source.key];
       },
     },
   }));
@@ -196,18 +259,26 @@ export function createQuerySchema(
 */
 export function createMutationSchema(
   fields: Array<MappedField>,
-  resolver: Integration["resolveMutation"],
+  integrationName: string,
 ) {
   // Generate mutation fields for each field in the target integration with formatted
   // field name and the resolved query value as it's argument
   const mutateFields = fields.map((f) => ({
-    [f.targetField.key]: {
+    [f.target.key]: {
       type: GraphQLString,
       args: {
         resolvedQuery: { type: GraphQLString },
       },
-      resolve(_: any, args: { resolvedQuery: string }) {
-        return resolver(f.targetField.key, args.resolvedQuery);
+      description: createSchemaDescription({
+        key: f.target.key,
+        source: f.source.key,
+        integration: integrationName,
+      }),
+      resolve(
+        source: Record<string, FieldValue>,
+        args: Record<string, FieldValue>,
+      ) {
+        return args.resolvedQuery;
       },
     },
   }));
@@ -216,6 +287,14 @@ export function createMutationSchema(
     name: "RootMutationType",
     fields: mutateFields.reduce((acc, f) => ({ ...acc, ...f }), {}),
   });
+}
+
+/**
+  For serialization purposes we keep metadata about a given
+  schema in it's description field
+*/
+export function createSchemaDescription(properties: Record<string, string>) {
+  return JSON.stringify(properties);
 }
 
 /**
@@ -238,7 +317,6 @@ export function createQueryString(schema: GraphQLSchema): string {
 */
 export function createMutationString(
   schema: GraphQLSchema,
-  fieldMappings: Array<MappedField>,
   queryResults: Record<string, any>,
 ): string {
   const mutationType = schema.getMutationType();
@@ -248,7 +326,6 @@ export function createMutationString(
 
   const fields = Object.entries(mutationType.getFields())
     .map(([mutationFieldName]) => {
-      // fieldName is currently in form `setFieldName` so we convert it to `fieldName`
       const queryFieldName = findQueryFieldName(
         fieldMappings,
         mutationFieldName,
@@ -269,8 +346,9 @@ export function createMutationString(
 /**
   resolveSource resolves the source integration query to a data record
 */
-export async function resolveSource(process: Process) {
+export async function resolveSource(process: SyncProcess) {
   const query = createQueryString(process.schema);
+  const rootValue = {};
   const result = await graphql({ schema: process.schema, source: query });
   if (result.errors) {
     throw new Error(`Query execution failed: ${result.errors}`);
@@ -286,15 +364,16 @@ export async function resolveSource(process: Process) {
     data records
 */
 export async function resolveTarget(
-  process: Process,
+  process: SyncProcess,
   queryResults: Record<string, any>,
 ) {
-  const mutation = createMutationString(
-    process.schema,
-    process.options.fields,
-    queryResults,
-  );
-  const result = await graphql({ schema: process.schema, source: mutation });
+  const mutation = createMutationString(process.schema, queryResults);
+  const rootValue = {};
+  const result = await graphql({
+    schema: process.schema,
+    source: mutation,
+    rootValue,
+  });
   if (result.errors) {
     throw new Error(`Mutation execution failed: ${result.errors}`);
   }
@@ -319,7 +398,7 @@ export async function resolveTarget(
     - schema has a mutation type
     - schema has as many query fields as there are mutation fields
 */
-export function validateProcess(process: Process) {
+export function validateProcess(process: SyncProcess) {
   try {
     // First make sure everything exists
     invariant(process, "Process is required");
@@ -380,7 +459,7 @@ export function validateProcess(process: Process) {
 /**
     sync synchronizes a given process
 */
-export async function sync(process: Process) {
+export async function sync(process: SyncProcess) {
   if (!validateProcess(process)) {
     console.warn("Process is invalid");
     return null;

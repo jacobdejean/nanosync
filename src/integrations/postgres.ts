@@ -1,1 +1,1 @@
-// TODO: Create example postgres connection url integration
+// TODO: Example postgres connection url integration

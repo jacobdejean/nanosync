@@ -10,12 +10,12 @@ import {
   sync,
   createProcess,
   type MappedField,
-  type Integration,
+  type IntegrationDefinition,
   FieldValue,
 } from "./nanosync";
 import { GraphQLSchema } from "graphql";
 
-const mockSourceIntegration: Integration = {
+const mockSourceIntegration: IntegrationDefinition = {
   name: "source",
   description: "source integration",
   resolveQuery: async (key: string) => FieldValue(`source_${key}_value`),
@@ -23,7 +23,7 @@ const mockSourceIntegration: Integration = {
     FieldValue(`mutated_${key}_${value}`),
 };
 
-const mockInvalidSourceIntegration: Integration = {
+const mockInvalidSourceIntegration: IntegrationDefinition = {
   name: "source",
   description: "source integration",
   resolveQuery: undefined,
@@ -31,14 +31,14 @@ const mockInvalidSourceIntegration: Integration = {
     FieldValue(`mutated_${key}_${value}`),
 };
 
-const mockTargetIntegration: Integration = {
+const mockTargetIntegration: IntegrationDefinition = {
   name: "target",
   description: "target integration",
   resolveQuery: (key: string) => FieldValue(`target_${key}_value`),
   resolveMutation: (key: string, value: string) => `mutated_${key}_${value}`,
 };
 
-const mockInvalidTargetIntegration: Integration = {
+const mockInvalidTargetIntegration: IntegrationDefinition = {
   name: "target",
   description: "target integration",
   resolveQuery: (key: string) => FieldValue(`target_${key}_value`),
